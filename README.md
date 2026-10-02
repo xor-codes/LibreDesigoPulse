@@ -304,4 +304,3 @@ This project is licensed under the [MIT License](LICENSE) — free to use, modif
 
 ---
 
-*Built for building automation engineers and network monitoring teams bridging OT infrastructure to modern NMS platforms.*
