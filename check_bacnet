@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+check_bacnet - Nagios/LibreNMS service plugin to read BACnet/IP objects.
+
+Pure Python 3 standard library, no dependencies. Sends a unicast
+ReadProperty (BACnet/IP, UDP) and evaluates the reply.
+
+Modes:
+  Device health (default):
+      check_bacnet -H 192.168.1.11 -i 1
+      -> reads device,1 system-status, object-name, model-name,
+         firmware-revision. OK when system-status is operational.
+
+  Point read:
+      check_bacnet -H 192.168.1.11 -i 1 -o analog-input:5 -w 30 -c 35 -u degC
+      -> reads present-value of AI:5, applies warn/crit thresholds,
+         emits perfdata for LibreNMS graphs.
+
+Exit codes: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN.
+
+Written for Siemens Desigo PXC4/PXC5/PXC7 stations but works with any
+BACnet/IP server that answers unicast ReadProperty.
+"""
+
+import argparse
+import socket
+import struct
+import sys
+
+OBJECT_TYPES = {
+    'analog-input': 0, 'ai': 0,
+    'analog-output': 1, 'ao': 1,
+    'analog-value': 2, 'av': 2,
+    'binary-input': 3, 'bi': 3,
+    'binary-output': 4, 'bo': 4,
+    'binary-value': 5, 'bv': 5,
+    'device': 8,
+    'multi-state-input': 13, 'msi': 13,
+    'multi-state-output': 14, 'mso': 14,
+    'multi-state-value': 19, 'msv': 19,
+}
+
+PROPERTIES = {
+    'present-value': 85,
+    'system-status': 112,
+    'object-name': 77,
+    'model-name': 70,
+    'firmware-revision': 44,
+    'application-software-version': 12,
+    'description': 28,
+    'units': 117,
+    'reliability': 103,
+    'out-of-service': 81,
+}
+
+SYSTEM_STATUS = {
+    0: 'operational',
+    1: 'operational-read-only',
+    2: 'download-required',
+    3: 'download-in-progress',
+    4: 'non-operational',
+    5: 'backup-in-progress',
+}
+
+ERROR_CLASSES = {0: 'device', 1: 'object', 2: 'property', 3: 'resources',
+                 4: 'security', 5: 'services', 6: 'vt', 7: 'communication'}
+
+
+def encode_read_property(invoke_id, obj_type, obj_inst, prop_id, array_index=None):
+    """Build BVLC+NPDU+APDU for a confirmed ReadProperty request."""
+    apdu = bytearray()
+    apdu.append(0x00)          # confirmed request, unsegmented
+    apdu.append(0x05)          # max segs / max APDU accepted (1476)
+    apdu.append(invoke_id & 0xFF)
+    apdu.append(0x0C)          # service choice: readProperty
+    # context tag 0: BACnetObjectIdentifier (4 bytes)
+    apdu.append(0x0C)
+    apdu += struct.pack('>I', ((obj_type & 0x3FF) << 22) | (obj_inst & 0x3FFFFF))
+    # context tag 1: property identifier
+    if prop_id < 256:
+        apdu.append(0x19)
+        apdu.append(prop_id)
+    else:
+        apdu.append(0x1A)
+        apdu += struct.pack('>H', prop_id)
+    # context tag 2: optional array index (e.g. one state-text element)
+    if array_index is not None:
+        if array_index < 256:
+            apdu.append(0x29)
+            apdu.append(array_index)
+        else:
+            apdu.append(0x2A)
+            apdu += struct.pack('>H', array_index)
+    npdu = bytes([0x01, 0x04])  # version 1, expecting reply
+    frame = bytes([0x81, 0x0A]) + struct.pack('>H', 4 + len(npdu) + len(apdu)) + npdu + bytes(apdu)
+    return frame
+
+
+def skip_npdu(data, pos):
+    """Advance past the NPDU (handles routed replies with SNET/DNET)."""
+    version = data[pos]
+    control = data[pos + 1]
+    pos += 2
+    if version != 0x01:
+        raise ValueError('unsupported NPDU version %d' % version)
+    if control & 0x20:                       # destination present
+        pos += 2                             # DNET
+        dlen = data[pos]
+        pos += 1 + dlen
+    if control & 0x08:                       # source present
+        pos += 2                             # SNET
+        slen = data[pos]
+        pos += 1 + slen
+    if control & 0x20:
+        pos += 1                             # hop count
+    return pos
+
+
+def decode_app_value(data, pos):
+    """Decode one application-tagged primitive value. Returns (value, tag, newpos)."""
+    tag_byte = data[pos]
+    tag_num = tag_byte >> 4
+    lvt = tag_byte & 0x07
+    pos += 1
+    if lvt == 5:                             # extended length
+        lvt = data[pos]
+        pos += 1
+    if tag_num == 1:                         # boolean: value in LVT
+        return (bool(tag_byte & 0x07), 1, pos)
+    raw = data[pos:pos + lvt]
+    pos += lvt
+    if tag_num in (2, 9):                    # unsigned / enumerated
+        return (int.from_bytes(raw, 'big'), tag_num, pos)
+    if tag_num == 3:                         # signed
+        return (int.from_bytes(raw, 'big', signed=True), tag_num, pos)
+    if tag_num == 4:                         # real
+        return (struct.unpack('>f', raw)[0], 4, pos)
+    if tag_num == 5:                         # double
+        return (struct.unpack('>d', raw)[0], 5, pos)
+    if tag_num == 7:                         # character string (1st byte: charset)
+        return (raw[1:].decode('utf-8', 'replace'), 7, pos)
+    if tag_num == 12:                        # object identifier
+        v = int.from_bytes(raw, 'big')
+        return ((v >> 22, v & 0x3FFFFF), 12, pos)
+    return (raw.hex(), tag_num, pos)
+
+
+def parse_reply(data, invoke_id):
+    """Parse a BACnet/IP reply; return decoded value or raise."""
+    if len(data) < 6 or data[0] != 0x81:
+        raise ValueError('not a BACnet/IP (BVLL) frame')
+    pos = skip_npdu(data, 4)
+    pdu_type = data[pos] >> 4
+    if pdu_type == 0x3:                      # ComplexACK
+        if data[pos + 1] != invoke_id:
+            raise ValueError('invoke id mismatch')
+        if data[pos + 2] != 0x0C:
+            raise ValueError('unexpected service choice in ACK')
+        pos += 3
+        # context tag 0: objectid (skip), context tag 1: property (skip)
+        while pos < len(data):
+            tag_byte = data[pos]
+            if tag_byte == 0x3E:             # opening tag 3: property value
+                pos += 1
+                value, tag, pos = decode_app_value(data, pos)
+                return value
+            # skip context-tagged item
+            lvt = tag_byte & 0x07
+            pos += 1
+            if lvt == 5:
+                lvt = data[pos]
+                pos += 1
+            pos += lvt
+        raise ValueError('no value in ComplexACK')
+    if pdu_type == 0x5:                      # Error PDU
+        pos += 3                             # type/invoke/service
+        eclass, _, pos = decode_app_value(data, pos)
+        ecode, _, pos = decode_app_value(data, pos)
+        raise RuntimeError('BACnet error: class=%s code=%d' %
+                           (ERROR_CLASSES.get(eclass, eclass), ecode))
+    if pdu_type == 0x6:
+        raise RuntimeError('BACnet reject (reason %d)' % data[pos + 2])
+    if pdu_type == 0x7:
+        raise RuntimeError('BACnet abort (reason %d)' % data[pos + 2])
+    raise ValueError('unexpected PDU type 0x%X' % pdu_type)
+
+
+def read_property(sock, addr, obj_type, obj_inst, prop_id, timeout, retries=2,
+                  array_index=None):
+    last_err = 'timeout'
+    for attempt in range(retries):
+        invoke_id = (17 + attempt) & 0xFF
+        sock.sendto(encode_read_property(invoke_id, obj_type, obj_inst, prop_id,
+                                         array_index), addr)
+        sock.settimeout(timeout)
+        try:
+            while True:
+                data, peer = sock.recvfrom(2048)
+                if peer[0] == addr[0]:
+                    return parse_reply(data, invoke_id)
+        except socket.timeout:
+            last_err = 'timeout after %.1fs' % timeout
+    raise TimeoutError(last_err)
+
+
+def check_threshold(value, spec):
+    """Nagios-style: plain number = alert if value > number;
+    'min:max' = alert if outside the range."""
+    if spec is None:
+        return False
+    if ':' in spec:
+        lo, _, hi = spec.partition(':')
+        if lo and value < float(lo):
+            return True
+        if hi and value > float(hi):
+            return True
+        return False
+    return value > float(spec)
+
+
+def main():
+    p = argparse.ArgumentParser(description='BACnet/IP ReadProperty check plugin')
+    p.add_argument('-H', '--host', required=True)
+    p.add_argument('-P', '--port', type=int, default=47808)
+    p.add_argument('-i', '--instance', type=int, required=True,
+                   help='BACnet device instance number')
+    p.add_argument('-o', '--object', default=None,
+                   help='object to read, e.g. analog-input:5 (default: the device object)')
+    p.add_argument('-r', '--property', dest='prop', default=None,
+                   help='property name or number (default: present-value for -o)')
+    p.add_argument('-w', '--warning', default=None, help='number or min:max range')
+    p.add_argument('-c', '--critical', default=None, help='number or min:max range')
+    p.add_argument('-u', '--units', default='', help='units string for perfdata')
+    p.add_argument('-l', '--label', default=None, help='label for output/perfdata')
+    p.add_argument('-t', '--timeout', type=float, default=5.0)
+    p.add_argument('--state-text', action='store_true',
+                   help='multistate objects: also read the state text for the '
+                        'current value and show it (e.g. "Operational")')
+    p.add_argument('--ok-states', default=None,
+                   help='comma-separated state numbers considered OK for a '
+                        'multistate value (e.g. "1" or "1,2"); any other '
+                        'value is CRITICAL. Overrides -w/-c.')
+    args = p.parse_args()
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('', 0))                   # ephemeral source port: parallel-safe
+        addr = (args.host, args.port)
+
+        if args.object is None:
+            # ---- device health mode ----
+            status = read_property(sock, addr, 8, args.instance,
+                                   PROPERTIES['system-status'], args.timeout)
+            details = []
+            for propname in ('object-name', 'model-name', 'firmware-revision'):
+                try:
+                    v = read_property(sock, addr, 8, args.instance,
+                                      PROPERTIES[propname], args.timeout)
+                    details.append(str(v))
+                except Exception:
+                    pass
+            sname = SYSTEM_STATUS.get(status, 'unknown(%s)' % status)
+            info = ' '.join(details)
+            if status == 0:
+                print('BACNET OK - %s [%s] | status=%d;;;0;5' % (sname, info, status))
+                sys.exit(0)
+            elif status in (1, 5):
+                print('BACNET WARNING - %s [%s] | status=%d;;;0;5' % (sname, info, status))
+                sys.exit(1)
+            else:
+                print('BACNET CRITICAL - %s [%s] | status=%d;;;0;5' % (sname, info, status))
+                sys.exit(2)
+
+        # ---- point read mode ----
+        otype_s, _, oinst_s = args.object.partition(':')
+        otype = OBJECT_TYPES.get(otype_s.lower())
+        if otype is None:
+            if otype_s.isdigit():
+                otype = int(otype_s)
+            else:
+                print('BACNET UNKNOWN - unknown object type %r' % otype_s)
+                sys.exit(3)
+        oinst = int(oinst_s)
+        if args.prop is None:
+            prop_id = PROPERTIES['present-value']
+        elif args.prop.isdigit():
+            prop_id = int(args.prop)
+        else:
+            prop_id = PROPERTIES.get(args.prop.lower())
+            if prop_id is None:
+                print('BACNET UNKNOWN - unknown property %r' % args.prop)
+                sys.exit(3)
+
+        value = read_property(sock, addr, otype, oinst, prop_id, args.timeout)
+        label = args.label or ('%s_%s' % (otype_s, oinst_s))
+
+        if isinstance(value, bool):
+            value = int(value)
+
+        # multistate helpers: state text + explicit OK-state list
+        state_note = ''
+        if args.state_text and isinstance(value, int) and value > 0:
+            try:
+                txt = read_property(sock, addr, otype, oinst, 110,  # state-text
+                                    args.timeout, array_index=value)
+                state_note = ' (%s)' % txt
+            except Exception:
+                pass
+        if args.ok_states is not None and isinstance(value, int):
+            ok = {int(x) for x in args.ok_states.split(',') if x.strip()}
+            perf = "'%s'=%d;;;" % (label, value)
+            if value in ok:
+                print('BACNET OK - %s = %d%s | %s' % (label, value, state_note, perf))
+                sys.exit(0)
+            print('BACNET CRITICAL - %s = %d%s | %s' % (label, value, state_note, perf))
+            sys.exit(2)
+
+        if isinstance(value, (int, float)):
+            if isinstance(value, float):
+                vstr = ('%.2f' % value).rstrip('0').rstrip('.')
+            else:
+                vstr = str(value)
+            perf = "'%s'=%s%s;%s;%s" % (label, vstr, args.units,
+                                        args.warning or '', args.critical or '')
+            if check_threshold(value, args.critical):
+                print('BACNET CRITICAL - %s = %s%s%s | %s' % (label, vstr, args.units, state_note, perf))
+                sys.exit(2)
+            if check_threshold(value, args.warning):
+                print('BACNET WARNING - %s = %s%s%s | %s' % (label, vstr, args.units, state_note, perf))
+                sys.exit(1)
+            print('BACNET OK - %s = %s%s%s | %s' % (label, vstr, args.units, state_note, perf))
+            sys.exit(0)
+        else:
+            print('BACNET OK - %s = %s' % (label, value))
+            sys.exit(0)
+
+    except TimeoutError as e:
+        print('BACNET CRITICAL - no reply from %s:%d (%s)' % (args.host, args.port, e))
+        sys.exit(2)
+    except RuntimeError as e:
+        print('BACNET CRITICAL - %s' % e)
+        sys.exit(2)
+    except Exception as e:
+        print('BACNET UNKNOWN - %s' % e)
+        sys.exit(3)
+
+
+if __name__ == '__main__':
+    main()

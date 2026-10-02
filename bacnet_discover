@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+bacnet_discover - enumerate a BACnet/IP device's objects and build the
+meter inventory for LibreNMS services.
+
+Reads the device's object-list one element at a time (no segmentation
+needed), then for each Multistate value reads object-name, present-value
+and the matching state-text. Objects named ...'PrphDev are the Desigo
+"Peripheral device" (meter Modbus state) objects; for those a ready
+check_bacnet service parameter line is printed.
+
+Usage:
+    bacnet_discover -H 192.168.1.11 -i 1
+    bacnet_discover -H 192.168.1.11 -i 1 --types msv,av --filter Elect
+"""
+
+import argparse
+import importlib.util
+import importlib.machinery
+import os
+import socket
+import sys
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_spec = importlib.util.spec_from_loader(
+    'cb', importlib.machinery.SourceFileLoader('cb', os.path.join(_here, 'check_bacnet')))
+cb = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cb)
+
+TYPE_NAMES = {0: 'ai', 1: 'ao', 2: 'av', 3: 'bi', 4: 'bo', 5: 'bv',
+              8: 'device', 13: 'msi', 14: 'mso', 19: 'msv'}
+OBJECT_LIST = 76
+OBJECT_NAME = 77
+PRESENT_VALUE = 85
+STATE_TEXT = 110
+
+
+def short_label(name):
+    """BUILDING3'sBix_04'BUILDING3-ELEC-1F-M33'PrphDev -> BUILDING3-ELEC-1F-M33"""
+    segs = [s for s in name.split("'") if s]
+    if len(segs) >= 2 and segs[-1] == 'PrphDev':
+        return segs[-2]
+    return segs[-1] if segs else name
+
+
+def main():
+    p = argparse.ArgumentParser(description='BACnet object discovery for LibreNMS')
+    p.add_argument('-H', '--host', required=True)
+    p.add_argument('-P', '--port', type=int, default=47808)
+    p.add_argument('-i', '--instance', type=int, required=True)
+    p.add_argument('--types', default='msv',
+                   help='comma list of object types to detail (default msv; '
+                        'e.g. msv,av,ai)')
+    p.add_argument('--filter', default=None,
+                   help='only show objects whose name contains this text')
+    p.add_argument('-t', '--timeout', type=float, default=3.0)
+    args = p.parse_args()
+
+    want = set()
+    for t in args.types.split(','):
+        t = t.strip().lower()
+        num = cb.OBJECT_TYPES.get(t)
+        if num is None:
+            sys.exit('unknown object type: %s' % t)
+        want.add(num)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('', 0))
+    addr = (args.host, args.port)
+    dev = (8, args.instance)
+
+    try:
+        count = cb.read_property(sock, addr, dev[0], dev[1], OBJECT_LIST,
+                                 args.timeout, array_index=0)
+    except Exception as e:
+        sys.exit('cannot read object-list of device %d at %s: %s'
+                 % (args.instance, args.host, e))
+
+    print('Device %d at %s: %d objects in object-list' % (args.instance, args.host, count))
+    found = []
+    for idx in range(1, count + 1):
+        try:
+            objid = cb.read_property(sock, addr, dev[0], dev[1], OBJECT_LIST,
+                                     args.timeout, array_index=idx)
+        except Exception:
+            continue
+        if not isinstance(objid, tuple) or objid[0] not in want:
+            continue
+        otype, oinst = objid
+        try:
+            name = cb.read_property(sock, addr, otype, oinst, OBJECT_NAME, args.timeout)
+        except Exception:
+            name = '?'
+        if args.filter and args.filter.lower() not in str(name).lower():
+            continue
+        pv = txt = None
+        try:
+            pv = cb.read_property(sock, addr, otype, oinst, PRESENT_VALUE, args.timeout)
+            if otype in (13, 14, 19) and isinstance(pv, int) and pv > 0:
+                txt = cb.read_property(sock, addr, otype, oinst, STATE_TEXT,
+                                       args.timeout, array_index=pv)
+        except Exception:
+            pass
+        found.append((otype, oinst, str(name), pv, txt))
+        sys.stderr.write('\rscanned %d/%d objects, matched %d   ' % (idx, count, len(found)))
+        sys.stderr.flush()
+    sys.stderr.write('\n')
+
+    if not found:
+        print('no matching objects found')
+        return
+
+    print()
+    print('%-10s %-55s %s' % ('OBJECT', 'NAME', 'PRESENT VALUE'))
+    for otype, oinst, name, pv, txt in found:
+        tname = TYPE_NAMES.get(otype, str(otype))
+        val = '' if pv is None else str(pv)
+        if txt:
+            val += ' (%s)' % txt
+        print('%-10s %-55s %s' % ('%s:%d' % (tname, oinst), name, val))
+
+    meters = [f for f in found if f[2].endswith("PrphDev")]
+    if meters:
+        print()
+        print('Suggested LibreNMS service parameters (meter Modbus states):')
+        print('(replace <OK> with the state number your healthy meters show)')
+        for otype, oinst, name, pv, txt in meters:
+            tname = TYPE_NAMES.get(otype, str(otype))
+            print('  -i %d -o %s:%d -l %s --state-text --ok-states <OK>'
+                  % (args.instance, tname, oinst, short_label(name)))
+
+
+if __name__ == '__main__':
+    main()

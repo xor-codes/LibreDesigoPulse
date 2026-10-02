@@ -1,0 +1,36 @@
+os: desigo-pxc
+text: 'Siemens Desigo PXC'
+type: environment
+icon: siemens
+group: siemens
+mib_dir: siemens
+over:
+    - { graph: device_bits, text: 'Device Traffic' }
+    - { graph: device_processor, text: 'Processor Usage' }
+    - { graph: device_mempool, text: 'Memory Usage' }
+discovery:
+    # Preferred: Siemens Automation MIB answers (works if/when the PXC7
+    # firmware exposes the enterprise tree 1.3.6.1.4.1.4329)
+    -
+        sysObjectID:
+            - .1.3.6.1.4.1.8072.3.2.
+        snmpget:
+            oid: .1.3.6.1.4.1.4329.6.3.2.1.1.1.0
+            op: contains
+            value: Siemens
+    -
+        sysObjectID:
+            - .1.3.6.1.4.1.8072.3.2.
+        snmpget:
+            oid: .1.3.6.1.4.1.4329.6.3.2.1.1.2.0
+            op: exists
+            value: true
+    # Site-specific fallback: current PXC7 firmware only exposes the SNMP
+    # system group. Matches aarch64 net-snmp Linux whose hostname follows
+    # the sBix automation-station naming (sysDescr: "Linux sBix_01 6.1.99+git... aarch64").
+    # Adjust the sBix_\d+ part if your stations are named differently.
+    -
+        sysObjectID:
+            - .1.3.6.1.4.1.8072.3.2.10
+        sysDescr_regex:
+            - '/^Linux sBix_\d+ \S+\+git[0-9a-f]+ .*aarch64/'

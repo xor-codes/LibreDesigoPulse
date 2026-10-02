@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""
+bacnet2librenms - scan a Desigo station over BACnet/IP and create the
+matching LibreNMS services automatically through the LibreNMS API.
+
+For every ...'PrphDev object (meter Modbus state) a service is created:
+    type:  bacnet
+    desc:  <meter name>            e.g. BUILDING3-ELEC-1F-M33
+    param: -i <inst> -o msv:<n> -l <meter> --state-text --ok-states <ok>
+
+--include-health also adds the station health objects (names ending in
+ModbusSta, PltSta, AsSta, IOBusSta).
+
+Services that already exist on the device (same param) are skipped, so
+re-running after new meters are engineered only adds the new ones.
+
+Default is a DRY RUN that prints what would be created; add --apply to
+actually create the services.
+
+Example:
+    ./bacnet2librenms -H 192.168.1.13 -i 3 \
+        --device 192.168.1.13 --api-url http://localhost \
+        --api-token 0123456789abcdef --apply
+
+The API token is created in the LibreNMS web UI: gear icon > API >
+API settings > Create API access token.
+"""
+
+import argparse
+import importlib.util
+import importlib.machinery
+import json
+import os
+import socket
+import sys
+import urllib.request
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_spec = importlib.util.spec_from_loader(
+    'cb', importlib.machinery.SourceFileLoader('cb', os.path.join(_here, 'check_bacnet')))
+cb = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cb)
+
+OBJECT_LIST, OBJECT_NAME, PRESENT_VALUE = 76, 77, 85
+HEALTH_SUFFIXES = ('ModbusSta', 'PltSta', 'AsSta', 'IOBusSta')
+
+
+def segments(name):
+    return [s for s in name.split("'") if s]
+
+
+def scan(host, port, instance, timeout, include_health):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('', 0))
+    addr = (host, port)
+    try:
+        count = cb.read_property(sock, addr, 8, instance, OBJECT_LIST, timeout,
+                                 array_index=0)
+    except Exception as e:
+        sys.exit('cannot reach BACnet device %d at %s:%d (%s) - check the IP '
+                 'and instance number' % (instance, host, port, e))
+    print('Device %d at %s: %d objects, scanning...' % (instance, host, count))
+    meters, health = [], []
+    for idx in range(1, count + 1):
+        try:
+            objid = cb.read_property(sock, addr, 8, instance, OBJECT_LIST,
+                                     timeout, array_index=idx)
+        except Exception:
+            continue
+        if not isinstance(objid, tuple) or objid[0] != 19:   # msv only
+            continue
+        oinst = objid[1]
+        try:
+            name = str(cb.read_property(sock, addr, 19, oinst, OBJECT_NAME, timeout))
+        except Exception:
+            continue
+        segs = segments(name)
+        if not segs:
+            continue
+        if segs[-1] == 'PrphDev' and len(segs) >= 2:
+            meters.append((oinst, segs[-2]))
+        elif include_health and segs[-1] in HEALTH_SUFFIXES:
+            health.append((oinst, '_'.join(segs[-2:]) if len(segs) >= 2 else segs[-1]))
+    return meters, health
+
+
+def api(url, token, method='GET', payload=None):
+    req = urllib.request.Request(url, method=method,
+                                 headers={'X-Auth-Token': token,
+                                          'Content-Type': 'application/json'})
+    data = json.dumps(payload).encode() if payload is not None else None
+    with urllib.request.urlopen(req, data=data, timeout=15) as r:
+        return json.loads(r.read().decode() or '{}')
+
+
+def existing_params(api_url, token, device):
+    try:
+        resp = api('%s/api/v0/services/%s' % (api_url, device), token)
+    except Exception as e:
+        sys.exit('cannot list existing services for %s: %s' % (device, e))
+    params = set()
+    svcs = resp.get('services', [])
+    # API nests as [[{...},{...}]] on some versions
+    for item in svcs:
+        rows = item if isinstance(item, list) else [item]
+        for row in rows:
+            if isinstance(row, dict):
+                params.add((row.get('service_param') or '').strip())
+    return params
+
+
+def main():
+    p = argparse.ArgumentParser(description='Sync Desigo meter states into LibreNMS services')
+    p.add_argument('-H', '--host', required=True, help='station IP to scan (BACnet)')
+    p.add_argument('-P', '--port', type=int, default=47808)
+    p.add_argument('-i', '--instance', type=int, required=True)
+    p.add_argument('--device', default=None,
+                   help='LibreNMS device hostname/IP to attach services to '
+                        '(default: same as -H)')
+    p.add_argument('--api-url', default='http://localhost',
+                   help='LibreNMS base URL (default http://localhost)')
+    p.add_argument('--api-token', default=os.environ.get('LIBRENMS_TOKEN'),
+                   help='LibreNMS API token (or env LIBRENMS_TOKEN)')
+    p.add_argument('--ok-states', default='1')
+    p.add_argument('--include-health', action='store_true',
+                   help='also add ModbusSta/PltSta/AsSta/IOBusSta objects')
+    p.add_argument('--apply', action='store_true',
+                   help='actually create the services (default: dry run)')
+    p.add_argument('-t', '--timeout', type=float, default=3.0)
+    args = p.parse_args()
+    if not args.api_token:
+        sys.exit('need --api-token (or env LIBRENMS_TOKEN)')
+    device = args.device or args.host
+
+    meters, health = scan(args.host, args.port, args.instance, args.timeout,
+                          args.include_health)
+    wanted = []
+    for oinst, label in meters + health:
+        wanted.append({
+            'type': 'bacnet',
+            'name': label,      # shown on availability-map dashboard tiles
+            'desc': label,
+            'ip': args.host,
+            'param': '-i %d -o msv:%d -l %s --state-text --ok-states %s'
+                     % (args.instance, oinst, label, args.ok_states),
+        })
+    print('found %d meters, %d health objects' % (len(meters), len(health)))
+
+    have = existing_params(args.api_url, args.api_token, device)
+    new = [w for w in wanted if w['param'] not in have]
+    skipped = len(wanted) - len(new)
+    if skipped:
+        print('%d already exist on %s, skipping' % (skipped, device))
+    if not new:
+        print('nothing to add')
+        return
+
+    for w in new:
+        if args.apply:
+            try:
+                resp = api('%s/api/v0/services/%s' % (args.api_url, device),
+                           args.api_token, 'POST', w)
+                status = resp.get('status', '?')
+            except Exception as e:
+                status = 'ERROR: %s' % e
+            print('add %-30s %s  -> %s' % (w['desc'], w['param'], status))
+        else:
+            print('would add %-30s %s' % (w['desc'], w['param']))
+    if not args.apply:
+        print('\ndry run only - re-run with --apply to create these %d services'
+              % len(new))
+
+
+if __name__ == '__main__':
+    main()
