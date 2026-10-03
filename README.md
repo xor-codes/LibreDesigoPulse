@@ -48,7 +48,7 @@ Reference: [Siemens Desigo PXC5.E24 documentation (SID)](https://sid.siemens.com
 
 Each meter appears on its station as a BACnet `multi-state-value` named e.g. `BUILDING3'sBix_04'BUILDING3-ELEC-1F-M33'PrphDev`. This project reads `present-value` + `state-text` and turns it into a LibreNMS service check.
 
-Station health objects (`ModbusSta`, `PltSta`, `AsSta`, `IOBusSta`) provide early warning indicators before individual meters drop offline.
+
 
 ### Verified Hardware & Sites
 
@@ -254,8 +254,8 @@ Automatically discover and register services in LibreNMS via API (safe and idemp
 
 ```bash
 export LIBRENMS_TOKEN="<your_api_token>"
-./bacnet2librenms -H 192.168.1.13 -i 3 --include-health          # Dry run preview
-./bacnet2librenms -H 192.168.1.13 -i 3 --include-health --apply  # Commit changes to LibreNMS
+./bacnet2librenms -H 192.168.1.13 -i 3           # Dry run preview
+./bacnet2librenms -H 192.168.1.13 -i 3  --apply  # Commit changes to LibreNMS
 ```
 
 ---
