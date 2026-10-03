@@ -22,7 +22,8 @@
 
 ## 1. Problem & Why BACnet
 
-Your power / water / steam meters speak **Modbus RTU (serial)** to a Siemens PXC station. The meters have **no IP of their own**. You want them in LibreNMS with green/red states and history graphs like this:
+Your power, water, and steam meters communicate with a Siemens PXC station via Modbus RTU (serial). Since the meters do not have their own IP addresses, they cannot communicate directly with LibreNMS.
+The objective is to integrate these meters into LibreNMS to monitor their uptime, analyze device logs and device states, and visualize historical data through graphs, similar to the example below.
 
 `BACNET OK - BUILDING3-ELEC-1F-M33 = 1 (Operational)`
 
