@@ -99,6 +99,9 @@ assets/logo.jpg                                     Square project logo
 assets/librenms-overview.png                        Production overview dashboard screenshot
 assets/librenms-services.png                        Services status table screenshot
 assets/librenms-eventlog.png                        State transition event log screenshot
+assets/topology-view.png							topology dashboard screenshot
+plugins/ldp-api.php
+plugins/topology-multi.html
 ```
 
 All three scripts must live together in the same directory — `bacnet_discover` and `bacnet2librenms` import `check_bacnet`. Pure Python 3 standard library only.
@@ -261,7 +264,33 @@ services.service_status != 0
 
 ---
 
-## 8. Operations & Troubleshooting
+## 8. Topology View (BETA)
+
+upload plugins/topology-multi.html  & plugins/ldp-api.php into /opt/librenms/html/plugins — It analyzes and displays:
+Create a dedicated read-only LibreNMS user, make its token, paste it only into LDP_API_TOKEN inside ldp-api.php on the server. 
+It never leaves the server: PHP executes, the browser only sees JSON meter data.
+
+browser http://yournms.com/plugins/topology-multi.html 
+
+
+
+🔍 "Needs attention" panel (top of page, auto-built every refresh from the last 500 log entries per controller)
+
+⚡ Flapping — ≥4 transitions (FLAP_MIN, tunable): "6 transitions — flapping, not a dead meter. Check Modbus tap/terminator." Your UB1-GAS-BOILER-M03 will land here on its own
+🔴 Down now — currently critical, oldest first with down-since duration triage order
+Every item click-throughs to that meter's inspector drawer
+Per-meter signals
+
+⚡×6 amber badge on flapping cards, next to the OK/CRITICAL pill
+Drawer gains a Transitions row (6 in last logs — FLAPPING)
+Tuning: FLAP_MIN: 4 and EVENTLOG_LIMIT: 500 in the config block. Drop FLAP_MIN to 3 if you want earlier warning on quiet buses, or raise the limit to 2000 for a longer lookback (slightly slower refresh).
+
+** Attention:** device IPs in source are fine (internal, and they're the point of the dashboard). But the page itself is still unauthenticated — anyone with the URL can see meter states.
+ If that's inside your plant network only, acceptable. If it needs to face further, either an nginx allow 10.x/172.31…; deny all; snippet for that path or a shared-password gate in the proxy.
+
+
+
+## 9. Operations & Troubleshooting
 
 * **Controller Silent on UDP 47808:** If a station does not reply despite BACnet/IP being enabled, check if the station is acting exclusively as a BACnet/SC hub or has an unstarted/halted application program in the ABT Site runtime.
 
@@ -276,7 +305,8 @@ lnms config:clear
 
 ---
 
-## 9. Contributing & Community
+
+## 10. Contributing & Community
 
 We are actively expanding LibreDesigoPulse to support more building automation controllers, specialized MIBs, and expanded protocol features. Contributions are very welcome!
 
@@ -298,7 +328,7 @@ We are actively expanding LibreDesigoPulse to support more building automation c
 
 ---
 
-## 10. License
+## 11. License
 
 This project is licensed under the [MIT License](LICENSE) — free to use, modify, and integrate into enterprise network operations.
 
