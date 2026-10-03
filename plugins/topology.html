@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LibreDesigoPulse Topology Live)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { font-family:'Inter',sans-serif; }
+  .mono { font-family:'JetBrains Mono',monospace; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:#0f172a; }
+  ::-webkit-scrollbar-thumb { background:#334155; border-radius:4px; }
+  .tab-active { background:#2563eb !important; color:#fff !important; border-color:#60a5fa !important; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased">
+
+<header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-40 px-4 lg:px-8 py-3">
+  <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center gap-3">
+    <div>
+      <h1 class="font-bold text-lg tracking-tight">LibreDesigoPulse Topology <span class="text-xs font-mono text-cyan-400 border border-cyan-800 rounded px-2 py-0.5 ml-1">LIVE</span></h1>
+      <p class="text-xs text-slate-400 mono" id="hdr-sub">— controllers</p>
+    </div>
+    <div class="flex items-center gap-2 md:ml-auto text-xs">
+      <div class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">Total <b id="g-total">–</b></div>
+      <div class="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/50">OK <b id="g-ok" class="text-emerald-300">–</b></div>
+      <div class="px-3 py-1.5 rounded-lg bg-rose-950/50 border border-rose-800/60">Critical <b id="g-crit" class="text-rose-300">–</b></div>
+      <button id="btn-refresh" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 font-medium">Refresh</button>
+    </div>
+  </div>
+  <!-- controller tabs -->
+  <div class="max-w-7xl mx-auto flex gap-1.5 mt-2 overflow-x-auto pb-1" id="ctrl-tabs"></div>
+  <div class="max-w-7xl mx-auto flex flex-col sm:flex-row gap-2 mt-2">
+    <input id="q" placeholder="Search meters (e.g. GF, M16, DIESEL, SOLAR)…"
+      class="w-full sm:w-80 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs mono placeholder-slate-500 focus:outline-none focus:border-cyan-500" />
+    <label class="text-xs text-slate-300 flex items-center gap-1.5"><input type="checkbox" id="crit-only" class="accent-rose-500" /> Critical only</label>
+    <span id="upd" class="text-xs text-slate-500 mono sm:ml-auto"></span>
+  </div>
+</header>
+
+<main id="sets" class="max-w-7xl mx-auto w-full p-4 lg:p-8 space-y-10"></main>
+
+<div id="ovl" class="fixed inset-0 bg-slate-950/70 z-50 hidden"></div>
+<aside id="drawer" class="fixed top-0 right-0 bottom-0 w-full sm:w-[440px] bg-slate-900 border-l border-slate-800 z-50 hidden flex-col">
+  <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+    <div><div class="text-xs mono uppercase tracking-wider text-slate-400" id="d-sub">Node</div>
+    <h3 id="d-title" class="font-bold text-lg">—</h3></div>
+    <button id="d-close" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">✕</button>
+  </div>
+  <div class="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
+    <div id="d-banner" class="rounded-xl p-3 border text-xs"></div>
+    <div id="d-rows" class="bg-slate-950/80 rounded-xl border border-slate-800 divide-y divide-slate-800/80 text-xs mono"></div>
+    <div><div class="text-xs uppercase tracking-wider text-slate-400 mono mb-1">BACnet message</div>
+    <div id="d-msg" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs mono break-all whitespace-pre-wrap"></div></div>
+    <div>
+      <div class="text-xs uppercase tracking-wider text-slate-400 mono mb-1">Floor assignment (saved in this browser)</div>
+      <div class="flex gap-2">
+        <select id="d-floor" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs mono"></select>
+        <button id="d-floor-save" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-medium">Move</button>
+      </div>
+      <p class="text-[11px] text-slate-500 mt-1">Moves <b>OTHER / UTIL</b> cards into a real floor. Overrides survive refresh.</p>
+    </div>
+  </div>
+</aside>
+
+<footer class="border-t border-slate-800 px-4 py-3 flex justify-center items-center">
+  <a
+    href="https://github.com/xor-codes/LibreDesigoPulse"
+    target="_blank"
+    rel="noopener noreferrer"
+    class="text-slate-500 hover:text-white transition-colors"
+    aria-label="View source on GitHub"
+    title="View source on GitHub"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.1 3.3 9.43 7.88 10.96.58.1.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.53-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.95.1-.75.4-1.25.73-1.54-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a11.04 11.04 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.7.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/>
+    </svg>
+  </a>
+</footer>
+
+<script>
+// ================= CONFIG =================
+const LDP = {
+  API_URL: 'http://nms.liz.com',       // '' = same origin when hosted under /html/plugins/
+  API_TOKEN: '',   // keep EMPTY: token lives server-side in ldp-api.php
+  PROXY: 'ldp-api.php',   // same-folder proxy; set '' to call the API directly
+  REFRESH_SEC: 60,
+  FLAP_MIN: 4,            // >=N transitions in log window => flapping
+  EVENTLOG_LIMIT: 500,
+  CONTROLLERS: [
+    { name: 'LIZ2-AS_03', device: '172.31.255.89' },
+    { name: 'LIZ3-AS_04', device: '172.31.255.90' },
+    { name: 'LKP1-AS_01', device: '172.31.255.91' },
+  ],
+  // USER-EDITABLE floor rules: [pattern, floorName] — first match wins.
+  // Anything unmatched becomes OTHER (which you can rename/move in the UI).
+  FLOOR_MAP: [
+    [/SOLAR/i, 'GF'],
+    [/WTR/i, 'GF'],
+    [/DIESEL/i, 'GEN'],
+    [/GAS/i, 'GEN'],
+    [/BOILER/i, 'GEN'],
+    [/STM/i, 'GEN'],
+  ],
+  FLOOR_NAMES: { OTHER: 'Utilities' },   // rename buckets here (or in the UI)
+};
+try {
+  const q = new URLSearchParams(location.search);
+  if (q.get('devices')) LDP.CONTROLLERS = q.get('devices').split(',').map(s => ({ name: s.trim(), device: s.trim() }));
+  if (q.get('api')) LDP.API_URL = q.get('api');
+} catch (e) {}
+function ldpHeaders() { return LDP.PROXY ? {} : { 'X-Auth-Token': LDP.API_TOKEN }; }
+function ldpSvcUrl(c) {
+  return LDP.PROXY
+    ? `${LDP.PROXY}?what=services&dev=${encodeURIComponent(c.device)}`
+    : `${LDP.API_URL}/api/v0/services/${encodeURIComponent(c.device)}`;
+}
+function ldpLogUrl(c) {
+  return LDP.PROXY
+    ? `${LDP.PROXY}?what=eventlog&dev=${encodeURIComponent(c.device)}&limit=${LDP.EVENTLOG_LIMIT}`
+    : `${LDP.API_URL}/api/v0/logs/eventlog/${encodeURIComponent(c.device)}?limit=${LDP.EVENTLOG_LIMIT}`;
+}
+// ==========================================
+
+const ALL = {};
+const FETCHED = {};   // device -> last successful poll time
+const LOGWIN = {};      // device -> {from,to,n} eventlog window analyzed
+let ctrlSel = 'ALL';          // controller tab
+const floorSel = {};          // device -> floor tab ('ALL' default)
+const store = {
+  get moves() { try { return JSON.parse(localStorage.getItem('ldpFloorMoves') || '{}'); } catch (e) { return {}; } },
+  set moves(v) { localStorage.setItem('ldpFloorMoves', JSON.stringify(v)); },
+  get names() { try { return JSON.parse(localStorage.getItem('ldpFloorNames') || '{}'); } catch (e) { return {}; } },
+  set names(v) { localStorage.setItem('ldpFloorNames', JSON.stringify(v)); },
+};
+const floorDisplay = f => store.names[f] || LDP.FLOOR_NAMES[f] || f;
+
+function labelOf(s) {
+  const m = /-l\s+(\S+)/.exec(s.service_param || '');
+  return m ? m[1] : (s.service_desc || s.service_name || ('#' + s.service_id));
+}
+function floorOf(label) {
+  const mv = store.moves;
+  if (mv[label]) return mv[label];
+  for (const [re, name] of LDP.FLOOR_MAP) if (re.test(label)) return name;
+  const m = /(^|-)(GF|[1-9][0-9]?F)(-|$)/.exec(label);
+  return m ? m[2] : 'OTHER';
+}
+function codeOf(msg, st) {
+  const m = /=\s*(\d+)\s*\(/.exec(msg || '');
+  return m ? +m[1] : (st === 0 ? 1 : 4);
+}
+function toMs(ts) {
+  if (ts == null || ts === '') return NaN;
+  if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts;
+  const s = String(ts).trim();
+  if (/^\d{9,10}$/.test(s)) return (+s) * 1000;          // unix seconds e.g. 1790970803
+  if (/^\d{13}$/.test(s)) return +s;                       // unix ms
+  const t = Date.parse(s.replace(' ', 'T'));
+  return t;
+}
+function fmtDT(ts) {
+  const ms = toMs(ts);
+  if (isNaN(ms)) return ts ? String(ts) : '—';
+  const d = new Date(ms);
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function ago(ts) {
+  const ms = toMs(ts);
+  if (isNaN(ms)) return '';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return Math.floor(s) + 's ago';
+  if (s < 5400) return Math.floor(s / 60) + 'm ago';
+  if (s < 172800) return (s / 3600).toFixed(1).replace('.0', '') + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+function demoRows(dev, n, prefix) {
+  const rows = [];
+  for (let i = 1; i <= n; i++) {
+    const crit = (i % 8 === 0);
+    const lb = `${prefix}-ELEC-GF-M${String(i).padStart(2, '0')}`;
+    rows.push({ id: lb, floor: 'GF', status: crit ? 'CRITICAL' : 'OK', code: crit ? 4 : 1,
+      message: crit ? `BACNET CRITICAL - ${lb} = 4 (Device missing)` : `BACNET OK - ${lb} = 1 (Operational)`,
+      host: dev, check: 'bacnet', desc: lb, changed: '2026-10-03 04:05:14',
+      down: crit ? '2026-10-03 04:05:14' : '', up: crit ? '' : '2026-10-03 03:35:13',
+      flaps: (i === 8 ? 6 : 0) });
+  }
+  return rows;
+}
+
+async function fetchOne(c) {
+  if (new URLSearchParams(location.search).get('demo') === '1') return demoRows(c.device, 12, c.name.split('-')[0]);
+  const r = await fetch(ldpSvcUrl(c), { headers: ldpHeaders() });
+  if (!r.ok) throw new Error(`${c.name}: HTTP ${r.status}`);
+  const j = await r.json();
+  let rows = j.services || [];
+  if (rows.length && Array.isArray(rows[0])) rows = rows.flat();
+  const mapped = rows.map(s => {
+    const label = labelOf(s);
+    const st = s.service_status != null ? +s.service_status : 3;
+    const msg = s.service_message || s.service_msg || '';
+    const ch = s.service_changed || s.updated || '';
+    return { id: label, floor: floorOf(label), status: st === 0 ? 'OK' : 'CRITICAL',
+      code: codeOf(msg, st), message: msg || `${label} = ${st}`,
+      host: s.service_ip || c.device, check: s.service_type || 'bacnet',
+      desc: label, changed: ch, down: '', up: '' };
+  });
+  // last stopped (OK->Critical) / recovered (Critical->OK) per meter from eventlog
+  try {
+    const lr = await fetch(ldpLogUrl(c), { headers: ldpHeaders() });
+    if (lr.ok) {
+      const lj = await lr.json();
+      const hist = {};
+      const entries = lj.logs || [];
+      if (entries.length) {
+        const dts = entries.map(e => e.datetime).filter(Boolean).sort();
+        LOGWIN[c.device] = { from: dts[0], to: dts[dts.length - 1], n: entries.length };
+      }
+      entries.forEach(e => {
+        const m = /Service (\S+) \(.*?\)'\s*changed status from (\w+) to (\w+)/.exec(e.message || '');
+        if (!m) return;
+        const h = hist[m[1]] || (hist[m[1]] = {});
+        h.n = (h.n || 0) + 1;
+        const dir = m[2].toLowerCase() + '->' + m[3].toLowerCase();
+        if (dir === 'ok->critical' && (!h.down || e.datetime > h.down)) h.down = e.datetime;
+        if (dir === 'critical->ok' && (!h.up || e.datetime > h.up)) h.up = e.datetime;
+      });
+      mapped.forEach(r => {
+        const h = hist[r.id] || hist[r.desc] ||
+          Object.entries(hist).find(([k]) => r.message.includes(k) || k.includes(r.id))?.[1];
+        r.flaps = 0;
+        if (h) { r.down = h.down || ''; r.up = h.up || ''; r.flaps = h.n || 0; }
+      });
+    }
+  } catch (e) { console.warn('eventlog skipped for ' + c.name + ':', e.message); }
+  return mapped;
+}
+
+function cardHTML(cName, m) {
+  const crit = m.status === 'CRITICAL';
+  const sub = [m.host, fmtDT(m.changed)].filter(Boolean).join('  •  ');
+  const downLine = crit && m.down ? `<div class="text-[10px] mono text-rose-300/90 mt-0.5" title="${m.down}">↓ down ${fmtDT(m.down)} (${ago(m.down)})</div>` : '';
+  const upLine = !crit && m.up ? `<div class="text-[10px] mono text-slate-500 mt-0.5" title="${m.up}">↑ up ${fmtDT(m.up)} (${ago(m.up)})</div>` : '';
+  return `<div data-id="${m.id}" data-ctrl="${cName}"
+    class="node-card cursor-pointer rounded-xl p-3 border transition hover:-translate-y-0.5 shadow-md relative overflow-hidden
+    ${crit ? 'border-rose-500/80 bg-gradient-to-br from-slate-900 to-rose-950/40' : 'border-slate-800 bg-slate-900/90 hover:border-emerald-500/60'}">
+    <div class="absolute left-0 top-0 bottom-0 w-1 ${crit ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}"></div>
+    <div class="pl-1.5">
+      <div class="flex items-start justify-between gap-1 mb-1">
+        <div class="min-w-0"><span class="text-[10px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">${m.floor}</span>
+        <h4 class="text-sm font-bold mt-1 break-all" title="${m.id}">${m.id}</h4></div>
+        <span class="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${crit ? 'bg-rose-950 text-rose-300 border-rose-800' : 'bg-emerald-950 text-emerald-300 border-emerald-800'}">${crit ? 'CRITICAL' : 'OK'}</span>${(m.flaps || 0) >= LDP.FLAP_MIN ? `<span class="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-700" title="${m.flaps} transitions in last log window">⚡×${m.flaps}</span>` : ''}
+      </div>
+      <div class="text-[11px] mono ${crit ? 'text-rose-300' : 'text-slate-400'} break-all whitespace-pre-wrap" title="${m.message}">${m.message}</div>
+      ${downLine}${upLine}
+      <div class="text-[10px] mono text-slate-500 border-t border-slate-800/80 pt-1.5 mt-1.5" title="${m.changed}">${sub}${m.changed ? ` (${ago(m.changed)})` : ''}</div>
+      <div class="text-[10px] mono text-slate-600 mt-0.5">\u2713 checked ${FETCHED[cName] || '--:--:--'}</div>
+    </div></div>`;
+}
+
+function renderCtrlTabs() {
+  const el = document.getElementById('ctrl-tabs');
+  const tabs = [{ name: 'All controllers', device: 'ALL' }, ...LDP.CONTROLLERS];
+  el.innerHTML = tabs.map(t =>
+    `<button data-ctrl="${t.device}" class="ctrl-tab shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 text-slate-300 ${ctrlSel === t.device ? 'tab-active' : ''}">${t.name}</button>`).join('');
+  el.querySelectorAll('.ctrl-tab').forEach(b => b.onclick = () => { ctrlSel = b.dataset.ctrl; render(); });
+}
+
+function logWindowText() {
+  const ws = Object.values(LOGWIN);
+  if (!ws.length) return 'auto-analysis of last ' + LDP.EVENTLOG_LIMIT + ' log entries';
+  const from = ws.map(w => w.from).sort()[0];
+  const to = ws.map(w => w.to).sort().pop();
+  return 'auto-analysis of last ' + LDP.EVENTLOG_LIMIT + ' log entries (' + fmtDT(from) + ' to ' + fmtDT(to) + ')';
+}
+
+function insightsHTML() {
+  const all = [];
+  LDP.CONTROLLERS.forEach(c => (ALL[c.device] || []).forEach(m => all.push({ c, m })));
+  const flap = all.filter(x => (x.m.flaps || 0) >= LDP.FLAP_MIN)
+    .sort((a, b) => b.m.flaps - a.m.flaps);
+  const down = all.filter(x => x.m.status === 'CRITICAL' && x.m.down)
+    .sort((a, b) => (a.m.down < b.m.down ? -1 : 1));
+  if (!flap.length && !down.length) return '';
+  const pill = s => s === 'OK'
+    ? '<span class="ml-1 px-1.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-bold">LIVE</span>'
+    : '<span class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 text-[10px] font-bold">DEAD</span>';
+  const item = (x, note) => `<button data-ctrl="${x.c.device}" data-id="${x.m.id}"
+    class="insight-item text-left w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-600 text-xs">
+    <span class="font-bold">${x.m.id}</span>${pill(x.m.status)} <span class="text-slate-500 mono">${x.c.name}</span><br>
+    <span class="text-slate-400">${note}</span></button>`;
+  return `<section class="bg-amber-950/20 border border-amber-800/50 rounded-2xl p-5">
+    <h2 class="font-bold text-sm mb-1">Needs attention <span class="text-slate-400 font-normal">- <span id="ldp-win"></span></span></h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+      <div><h3 class="text-xs mono uppercase tracking-wider text-amber-300 mb-2">Flapping — ${flap.length} (loose tap / terminator?)</h3>
+        <div class="space-y-2 max-h-72 overflow-y-auto pr-1">${flap.length ? flap.map(x =>
+          item(x, `${x.m.flaps} transitions — flapping, not a dead meter. Check Modbus tap/terminator.`)).join('')
+          : '<p class="text-xs text-slate-500">None.</p>'}</div></div>
+      <div><h3 class="text-xs mono uppercase tracking-wider text-rose-300 mb-2">Down now — ${down.length} (oldest first)</h3>
+        <div class="space-y-2 max-h-72 overflow-y-auto pr-1">${down.length ? down.map(x =>
+          item(x, `down since ${fmtDT(x.m.down)} (${ago(x.m.down)}) — field visit.`)).join('')
+          : '<p class="text-xs text-slate-500">None.</p>'}</div></div>
+    </div></section>`;
+}
+
+function render() {
+  renderCtrlTabs();
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const critOnly = document.getElementById('crit-only').checked;
+  const host = document.getElementById('sets');
+  host.innerHTML = insightsHTML();
+  let gt = 0, go = 0, gc = 0;
+  LDP.CONTROLLERS.filter(c => ctrlSel === 'ALL' || c.device === ctrlSel).forEach(c => {
+    const all = ALL[c.device] || [];
+    gt += all.length; go += all.filter(m => m.status === 'OK').length; gc += all.filter(m => m.status === 'CRITICAL').length;
+    const floors = [...new Set(all.map(m => m.floor))].sort();
+    if (!floorSel[c.device]) floorSel[c.device] = 'ALL';
+    const fsel = floorSel[c.device];
+    let rows = all.filter(m => (fsel === 'ALL' || m.floor === fsel));
+    if (critOnly) rows = rows.filter(m => m.status === 'CRITICAL');
+    if (q) rows = rows.filter(m => (m.id + ' ' + m.message + ' ' + m.floor).toLowerCase().includes(q));
+    const groups = [...new Set(rows.map(m => m.floor))].sort().map(f => ({ f, items: rows.filter(m => m.floor === f) }));
+    const ok = all.filter(m => m.status === 'OK').length, crit = all.filter(m => m.status === 'CRITICAL').length;
+    host.innerHTML += `<section class="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <h2 class="font-bold text-base">${c.name}</h2>
+        <span class="text-xs mono text-slate-400">${c.device}</span>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700">${all.length} svc</span>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">${ok} OK</span>
+        ${crit ? `<span class="text-xs px-2 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 animate-pulse">${crit} critical</span>` : ''}
+      </div>
+      <div class="flex gap-1.5 overflow-x-auto pb-2 mb-1">
+        ${['ALL', ...floors].map(f => `<button data-dev="${c.device}" data-floor="${f}" class="floor-tab shrink-0 px-2.5 py-1 rounded-full text-xs border ${fsel === f ? 'tab-active border-blue-400' : 'bg-slate-800 text-slate-300 border-slate-700'}">${f === 'ALL' ? 'All floors' : floorDisplay(f) + ' (' + all.filter(m => m.floor === f).length + ')'}</button>`).join('')}
+      </div>
+      ${groups.length ? groups.map(g => `<div class="flex items-center gap-2 mt-3 mb-2">
+          <h3 class="text-xs mono uppercase tracking-wider text-slate-400">${floorDisplay(g.f)} — ${g.items.length}</h3>
+          ${g.f === 'OTHER' || !LDP.FLOOR_NAMES[g.f] && g.f !== 'GF' && !/[1-9][0-9]?F/.test(g.f) ? `<button class="rename-floor text-[11px] text-cyan-400 hover:underline" data-floor="${g.f}">✎ rename</button>` : ''}
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">${g.items.map(m => cardHTML(c.device, m)).join('')}</div>`).join('')
+        : '<p class="text-xs mono text-slate-500">No meters match filter.</p>'}
+    </section>`;
+  });
+  const _w = document.getElementById('ldp-win'); if (_w) _w.textContent = logWindowText();
+  document.getElementById('g-total').textContent = gt;
+  document.getElementById('g-ok').textContent = go;
+  document.getElementById('g-crit').textContent = gc;
+  document.getElementById('hdr-sub').textContent = LDP.CONTROLLERS.map(c => c.name).join('  •  ');
+  host.querySelectorAll('.floor-tab').forEach(b => b.onclick = () => { floorSel[b.dataset.dev] = b.dataset.floor; render(); });
+  host.querySelectorAll('.rename-floor').forEach(b => b.onclick = () => {
+    const cur = floorDisplay(b.dataset.floor);
+    const v = prompt(`Display name for group "${b.dataset.floor}":`, cur);
+    if (v && v.trim()) { const n = store.names; n[b.dataset.floor] = v.trim(); store.names = n; render(); }
+  });
+  host.querySelectorAll('.node-card').forEach(el => el.onclick = () => openDrawer(el.dataset.ctrl, el.dataset.id));
+  host.querySelectorAll('.insight-item').forEach(el => el.onclick = () => openDrawer(el.dataset.ctrl, el.dataset.id));
+}
+
+let drawerCtx = {};
+function openDrawer(ctrl, id) {
+  const m = (ALL[ctrl] || []).find(x => x.id === id);
+  if (!m) return;
+  drawerCtx = { ctrl, id };
+  const crit = m.status === 'CRITICAL';
+  document.getElementById('d-sub').textContent = ctrl + ' • ' + floorDisplay(m.floor);
+  document.getElementById('d-title').textContent = m.id;
+  const b = document.getElementById('d-banner');
+  b.className = 'rounded-xl p-3 border text-xs ' + (crit ? 'bg-rose-950/60 border-rose-800 text-rose-300' : 'bg-emerald-950/60 border-emerald-800 text-emerald-300');
+  b.textContent = crit ? `BACnet fault — code ${m.code}. Check Modbus wiring/power.` : `Operational — code ${m.code}. Heartbeat OK.`;
+  document.getElementById('d-rows').innerHTML =
+    `<div class="p-3 flex justify-between gap-2"><span class="text-slate-400">Controller</span><span class="text-right">${ctrl}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-slate-400">Remote host</span><span class="text-cyan-400 text-right">${m.host}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-slate-400">Check</span><span>${m.check}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-slate-400">State code</span><span>${m.code}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-slate-400">Changed</span><span class="text-right">${fmtDT(m.changed)}${m.changed ? ' (' + ago(m.changed) + ')' : ''}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-rose-300">Last stopped ↓</span><span class="text-right">${m.down ? fmtDT(m.down) + ' (' + ago(m.down) + ')' : '—'}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-amber-300">Transitions ⚡</span><span class="text-right">${m.flaps || 0} in last logs${(m.flaps || 0) >= LDP.FLAP_MIN ? ' — FLAPPING' : ''}</span></div>
+     <div class="p-3 flex justify-between gap-2"><span class="text-emerald-300">Last recovered ↑</span><span class="text-right">${m.up ? fmtDT(m.up) + ' (' + ago(m.up) + ')' : '—'}</span></div>`;
+  document.getElementById('d-msg').textContent = m.message;
+  const floors = [...new Set((ALL[ctrl] || []).map(x => x.floor))].sort();
+  document.getElementById('d-floor').innerHTML =
+    floors.map(f => `<option ${f === m.floor ? 'selected' : ''}>${f}</option>`).join('') + `<option value="__new">+ New floor…</option>`;
+  const d = document.getElementById('drawer');
+  d.classList.remove('hidden'); d.classList.add('flex');
+  document.getElementById('ovl').classList.remove('hidden');
+}
+document.getElementById('d-floor-save').onclick = () => {
+  const sel = document.getElementById('d-floor');
+  let v = sel.value;
+  if (v === '__new') { v = prompt('New floor name (e.g. Roof, Basement):'); if (!v || !v.trim()) return; v = v.trim().toUpperCase(); }
+  const mv = store.moves; mv[drawerCtx.id] = v; store.moves = mv;
+  closeDrawer(); render();
+};
+function closeDrawer() {
+  const d = document.getElementById('drawer');
+  d.classList.add('hidden'); d.classList.remove('flex');
+  document.getElementById('ovl').classList.add('hidden');
+}
+document.getElementById('d-close').onclick = closeDrawer;
+document.getElementById('ovl').onclick = closeDrawer;
+
+async function refresh() {
+  const res = await Promise.allSettled(LDP.CONTROLLERS.map(c => fetchOne(c)));
+  const now = new Date().toLocaleTimeString();
+  res.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      ALL[LDP.CONTROLLERS[i].device] = r.value;
+      FETCHED[LDP.CONTROLLERS[i].device] = now;
+    } else console.warn(r.reason);
+  });
+  render();
+  const okN = res.filter(r => r.status === 'fulfilled').length;
+  document.getElementById('upd').textContent = `updated ${new Date().toLocaleTimeString()} • ${okN}/${LDP.CONTROLLERS.length} controllers`;
+}
+document.getElementById('q').oninput = render;
+document.getElementById('crit-only').onchange = render;
+document.getElementById('btn-refresh').onclick = refresh;
+refresh();
+setInterval(refresh, LDP.REFRESH_SEC * 1000);
+</script>
+</body>
+</html>

@@ -87,7 +87,8 @@ Full audit trail tracking when field meters drop offline or recover after wiring
 
 AI-Driven Dashboard (Work in Progress)
 More than just a data visualization tool, it analyzes system data, identifies potential issues, and generates alerts to help you take proactive action.
-
+![Multi Topology View dashboard (BETA)](assets/topology-dashboard.png)
+![Multi Topology View dashboard (BETA)](assets/topology-dashboard2.png)
 ![Multi Topology View dashboard (BETA)](assets/topology-view.png)
 
 ---

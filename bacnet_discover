@@ -20,6 +20,8 @@ import importlib.machinery
 import os
 import socket
 import sys
+import tempfile
+import time
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_loader(
@@ -54,6 +56,11 @@ def main():
     p.add_argument('--filter', default=None,
                    help='only show objects whose name contains this text')
     p.add_argument('-t', '--timeout', type=float, default=3.0)
+    p.add_argument('--out', default=None, metavar='FILE',
+                   help='write suggested service lines to FILE '
+                        '(default: as<ii>_meters.txt in the temp dir)')
+    p.add_argument('--no-save', action='store_true',
+                   help='do not write the meters file')
     args = p.parse_args()
 
     want = set()
@@ -124,10 +131,31 @@ def main():
         print()
         print('Suggested LibreNMS service parameters (meter Modbus states):')
         print('(replace <OK> with the state number your healthy meters show)')
+        lines = []
         for otype, oinst, name, pv, txt in meters:
             tname = TYPE_NAMES.get(otype, str(otype))
-            print('  -i %d -o %s:%d -l %s --state-text --ok-states <OK>'
-                  % (args.instance, tname, oinst, short_label(name)))
+            line = ('-i %d -o %s:%d -l %s --state-text --ok-states <OK>'
+                    % (args.instance, tname, oinst, short_label(name)))
+            lines.append(line)
+            print('  ' + line)
+        if not args.no_save:
+            out = args.out or os.path.join(tempfile.gettempdir(),
+                                           'as%02d_meters.txt' % args.instance)
+            try:
+                with open(out, 'w', encoding='utf-8') as fp:
+                    fp.write('# bacnet_discover %s instance %d\n'
+                              % (args.host, args.instance))
+                    fp.write('# %d objects scanned, %d meters, %s\n'
+                              % (count, len(lines),
+                                 time.strftime('%Y-%m-%d %H:%M:%S')))
+                    fp.write('\n'.join(lines) + '\n')
+            except OSError as e:
+                sys.stderr.write('\ncould not write %s (%s)\n'
+                                 % (out, e))
+                sys.stderr.write('hint: use --out /tmp/as%02d_meters.txt '
+                                 'or --no-save\n' % args.instance)
+            else:
+                print('\nwrote %s (%d service lines)' % (out, len(lines)))
 
 
 if __name__ == '__main__':

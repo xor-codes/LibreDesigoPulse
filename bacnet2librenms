@@ -3,13 +3,11 @@
 bacnet2librenms - scan a Desigo station over BACnet/IP and create the
 matching LibreNMS services automatically through the LibreNMS API.
 
-For every ...'PrphDev object (meter Modbus state) a service is created:
+Contract: imports EXACTLY what bacnet_discover suggests, i.e. only the
+...'PrphDev objects (meter Modbus states). Nothing else, no filters:
     type:  bacnet
-    desc:  <meter name>            e.g. BUILDING3-ELEC-1F-M33
+    desc:  <meter name>            e.g. LIZ2-ELEC-GF-M16
     param: -i <inst> -o msv:<n> -l <meter> --state-text --ok-states <ok>
-
---include-health also adds the station health objects (names ending in
-ModbusSta, PltSta, AsSta, IOBusSta).
 
 Services that already exist on the device (same param) are skipped, so
 re-running after new meters are engineered only adds the new ones.
@@ -18,8 +16,8 @@ Default is a DRY RUN that prints what would be created; add --apply to
 actually create the services.
 
 Example:
-    ./bacnet2librenms -H 192.168.1.13 -i 3 \
-        --device 192.168.1.13 --api-url http://localhost \
+    ./bacnet2librenms -H 172.31.255.89 -i 3 \
+        --device 172.31.255.89 --api-url http://localhost \
         --api-token 0123456789abcdef --apply
 
 The API token is created in the LibreNMS web UI: gear icon > API >
@@ -41,15 +39,15 @@ _spec = importlib.util.spec_from_loader(
 cb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cb)
 
-OBJECT_LIST, OBJECT_NAME, PRESENT_VALUE = 76, 77, 85
-HEALTH_SUFFIXES = ('ModbusSta', 'PltSta', 'AsSta', 'IOBusSta')
+OBJECT_LIST, OBJECT_NAME = 76, 77
 
 
 def segments(name):
     return [s for s in name.split("'") if s]
 
 
-def scan(host, port, instance, timeout, include_health):
+def scan(host, port, instance, timeout):
+    """Return [(msv_instance, meter_label)] for ...'PrphDev objects only."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('', 0))
     addr = (host, port)
@@ -60,7 +58,7 @@ def scan(host, port, instance, timeout, include_health):
         sys.exit('cannot reach BACnet device %d at %s:%d (%s) - check the IP '
                  'and instance number' % (instance, host, port, e))
     print('Device %d at %s: %d objects, scanning...' % (instance, host, count))
-    meters, health = [], []
+    meters = []
     for idx in range(1, count + 1):
         try:
             objid = cb.read_property(sock, addr, 8, instance, OBJECT_LIST,
@@ -75,13 +73,9 @@ def scan(host, port, instance, timeout, include_health):
         except Exception:
             continue
         segs = segments(name)
-        if not segs:
-            continue
-        if segs[-1] == 'PrphDev' and len(segs) >= 2:
+        if len(segs) >= 2 and segs[-1] == 'PrphDev':
             meters.append((oinst, segs[-2]))
-        elif include_health and segs[-1] in HEALTH_SUFFIXES:
-            health.append((oinst, '_'.join(segs[-2:]) if len(segs) >= 2 else segs[-1]))
-    return meters, health
+    return meters
 
 
 def api(url, token, method='GET', payload=None):
@@ -122,8 +116,6 @@ def main():
     p.add_argument('--api-token', default=os.environ.get('LIBRENMS_TOKEN'),
                    help='LibreNMS API token (or env LIBRENMS_TOKEN)')
     p.add_argument('--ok-states', default='1')
-    p.add_argument('--include-health', action='store_true',
-                   help='also add ModbusSta/PltSta/AsSta/IOBusSta objects')
     p.add_argument('--apply', action='store_true',
                    help='actually create the services (default: dry run)')
     p.add_argument('-t', '--timeout', type=float, default=3.0)
@@ -132,10 +124,9 @@ def main():
         sys.exit('need --api-token (or env LIBRENMS_TOKEN)')
     device = args.device or args.host
 
-    meters, health = scan(args.host, args.port, args.instance, args.timeout,
-                          args.include_health)
+    meters = scan(args.host, args.port, args.instance, args.timeout)
     wanted = []
-    for oinst, label in meters + health:
+    for oinst, label in meters:
         wanted.append({
             'type': 'bacnet',
             'name': label,      # shown on availability-map dashboard tiles
@@ -144,7 +135,7 @@ def main():
             'param': '-i %d -o msv:%d -l %s --state-text --ok-states %s'
                      % (args.instance, oinst, label, args.ok_states),
         })
-    print('found %d meters, %d health objects' % (len(meters), len(health)))
+    print('found %d meters' % len(meters))
 
     have = existing_params(args.api_url, args.api_token, device)
     new = [w for w in wanted if w['param'] not in have]
