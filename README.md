@@ -271,31 +271,75 @@ services.service_status != 0
 
 ---
 
-## 8. Multi Topology View dashboard (BETA)
+## 8. Multi-Topology View Dashboard (BETA)
 
-upload plugins/topology-multi.html  & plugins/ldp-api.php into /opt/librenms/html/plugins — It analyzes and displays:
-Create a dedicated read-only LibreNMS user, make its token, paste it only into LDP_API_TOKEN inside ldp-api.php on the server. 
-It never leaves the server: PHP executes, the browser only sees JSON meter data.
+The Multi-Topology View Dashboard is a read-only monitoring interface that analyzes and visualizes meter states, identifies potential issues, and highlights devices that require attention.
 
-browser http://yournms.com/plugins/topology-multi.html 
+### Installation & Configuration
 
+Upload the following files to `/opt/librenms/html/plugins`:
 
+- `plugins/topology-multi.html`
+- `plugins/ldp-api.php`
 
-🔍 "Needs attention" panel (top of page, auto-built every refresh from the last 500 log entries per controller)
+Create a dedicated **read-only LibreNMS user**, generate an API token, and configure it exclusively in the `LDP_API_TOKEN` variable inside `ldp-api.php` on the server.
 
-⚡ Flapping — ≥4 transitions (FLAP_MIN, tunable): "6 transitions — flapping, not a dead meter. Check Modbus tap/terminator." Your UB1-GAS-BOILER-M03 will land here on its own
-🔴 Down now — currently critical, oldest first with down-since duration triage order
-Every item click-throughs to that meter's inspector drawer
-Per-meter signals
+**Security:** The API token never leaves the server. PHP handles API requests, and the browser receives only the required JSON meter data.
 
-⚡×6 amber badge on flapping cards, next to the OK/CRITICAL pill
-Drawer gains a Transitions row (6 in last logs — FLAPPING)
-Tuning: FLAP_MIN: 4 and EVENTLOG_LIMIT: 500 in the config block. Drop FLAP_MIN to 3 if you want earlier warning on quiet buses, or raise the limit to 2000 for a longer lookback (slightly slower refresh).
+**Access the dashboard:**
+`http://yournms.com/plugins/topology-multi.html`
 
-** Attention:** device IPs in source are fine (internal, and they're the point of the dashboard). But the page itself is still unauthenticated — anyone with the URL can see meter states.
- If that's inside your plant network only, acceptable. If it needs to face further, either an nginx allow 10.x/172.31…; deny all; snippet for that path or a shared-password gate in the proxy.
+### Needs Attention Panel
 
+The dashboard automatically builds a **Needs Attention** panel at the top of the page on every refresh. It analyzes the latest 500 log entries per controller to identify meters that require investigation.
 
+**1. Flapping Meters**
+
+- Detects meters with 4 or more state transitions (`FLAP_MIN`), indicating unstable connectivity or intermittent communication.
+- Displays an amber ⚡ badge with the transition count to distinguish flapping meters from permanently down devices.
+- Example: `6 transitions — Flapping, not a dead meter. Check Modbus tap/terminator.`
+- Meters such as `UB1-GAS-BOILER-M03` will automatically appear in this section when they meet the threshold.
+
+**2. Down Now**
+
+- Identifies meters that are currently in a critical state.
+- Sorts them by the longest down duration, placing devices that have been down the longest at the top for prioritization.
+
+Every item in the **Needs Attention** panel is clickable and opens the corresponding meter's inspector drawer for further investigation.
+
+### Per-Meter Status Indicators
+
+The dashboard provides additional visibility into individual meter conditions:
+
+- **Flapping Badge:** An amber `⚡×6` badge appears on flapping meter cards alongside the existing `OK` or `CRITICAL` status indicator.
+- **Transition Details:** Each meter's inspector drawer includes a **Transitions** row, showing the number of state changes detected in the available logs and whether the meter is flapping.
+
+### Configuration & Tuning
+
+The following parameters are available in the configuration block of `ldp-api.php`:
+
+| Parameter | Default | Description |
+|---|---:|---|
+| `FLAP_MIN` | `4` | Minimum state transitions required to classify a meter as flapping. |
+| `EVENTLOG_LIMIT` | `500` | Number of recent log entries per controller to analyze. |
+
+Adjust these values according to your monitoring requirements:
+
+- **Earlier Warning:** Reduce `FLAP_MIN` to `3` to detect intermittent issues sooner, particularly on quieter Modbus buses.
+- **Extended Lookback:** Increase `EVENTLOG_LIMIT` to `2000` to analyze a longer history. This may slightly increase dashboard refresh time.
+
+### Security Considerations
+
+Device IP addresses are included in the source code. Since these are internal plant network addresses and are essential to the dashboard's purpose, this is acceptable within the intended environment.
+
+However, the dashboard itself is currently **unauthenticated**. Anyone who can access its URL can view the meter states and related information.
+
+If the dashboard is restricted to the internal plant network, this may be acceptable. If broader access is required, implement one of the following security measures:
+
+- **Nginx IP Restriction:** Configure an allowlist for authorized internal IP ranges, such as `10.x.x.x` or `172.31.x.x`, followed by a `deny all` rule for the dashboard path.
+- **Shared-Password Gate:** Configure a password-protected access layer at the Nginx reverse proxy level.
+
+Restrict access before exposing the dashboard beyond the trusted plant network.
 
 ## 9. Operations & Troubleshooting
 
