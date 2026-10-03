@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.jpg" alt="LibreDesigoPulse Logo" width="120" />
+
 
 # LibreDesigoPulse (LDP)
 
@@ -12,10 +12,10 @@
 
 </div>
 
-![LibreDesigoPulse banner](assets/banner.jpg)
+
 
 > Bridges field meters behind controllers like **Siemens Desigo PXC5/PXC7** to **LibreNMS** over **BACnet/IP**.
-> Includes custom OS detection, auto-discovery, and service checks.
+> Includes custom OS detection, auto-discovery, and service checks For Monitoring.
 > Pure Python 3 stdlib — no pip dependencies.
 
 ---
