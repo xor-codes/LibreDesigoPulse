@@ -83,6 +83,13 @@ Full audit trail tracking when field meters drop offline or recover after wiring
 
 ![Transition and alert history](assets/librenms-eventlog.png)
 
+### 4. Multi Topology View dashboard (BETA)
+
+AI-Driven Dashboard (Work in Progress)
+More than just a data visualization tool, it analyzes system data, identifies potential issues, and generates alerts to help you take proactive action.
+
+![Multi Topology View dashboard (BETA)](assets/topology-view.png)
+
 ---
 
 ## 3. What's in This Repo
@@ -264,7 +271,7 @@ services.service_status != 0
 
 ---
 
-## 8. Topology View (BETA)
+## 8. Multi Topology View dashboard (BETA)
 
 upload plugins/topology-multi.html  & plugins/ldp-api.php into /opt/librenms/html/plugins — It analyzes and displays:
 Create a dedicated read-only LibreNMS user, make its token, paste it only into LDP_API_TOKEN inside ldp-api.php on the server. 
